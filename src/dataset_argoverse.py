@@ -55,11 +55,14 @@ def get_sub_map(args: utils.Args, x, y, city_name, vectors=[], polyline_spans=[]
         assert isinstance(am, ArgoverseMap)
         # Add more lane attributes, such as 'has_traffic_control', 'is_intersection' etc.
         if 'semantic_lane' in args.other_params:
+            '''
+                有语义车道比没有语义车道多了lane_ids、local_lane_centerlines、lane_segment等信息
+            '''
             lane_ids = am.get_lane_ids_in_xy_bbox(x, y, city_name, query_search_range_manhattan=args.max_distance)
             local_lane_centerlines = [am.get_lane_segment_centerline(lane_id, city_name) for lane_id in lane_ids]
             polygons = local_lane_centerlines
 
-            if args.visualize:
+            if args.visualize:# 可视化
                 angle = mapping['angle']
                 vis_lanes = [am.get_lane_segment_polygon(lane_id, city_name)[:, :2] for lane_id in lane_ids]
                 t = []
@@ -70,18 +73,18 @@ def get_sub_map(args: utils.Args, x, y, city_name, vectors=[], polyline_spans=[]
                     t.append(each[:num].copy())
                     t.append(each[num:num * 2].copy())
                 vis_lanes = t
-                mapping['vis_lanes'] = vis_lanes
+                mapping['vis_lanes'] = vis_lanes# 可视化用的车道线
         else:
             polygons = am.find_local_lane_centerlines(x, y, city_name,
                                                       query_search_range_manhattan=args.max_distance)
-        polygons = [polygon[:, :2].copy() for polygon in polygons]
+        polygons = [polygon[:, :2].copy() for polygon in polygons]# polygon[:, :2]是车道线的坐标点
         angle = mapping['angle']
         for index_polygon, polygon in enumerate(polygons):
             for i, point in enumerate(polygon):
-                point[0], point[1] = rotate(point[0] - x, point[1] - y, angle)
+                point[0], point[1] = rotate(point[0] - x, point[1] - y, angle)# 将每个坐标点相对于 (x, y) 旋转指定的角度 angle
                 if 'scale' in mapping:
                     assert 'enhance_rep_4' in args.other_params
-                    scale = mapping['scale']
+                    scale = mapping['scale']# 对点进行缩放，适用于增强图形表现力的场景
                     point[0] *= scale
                     point[1] *= scale
 
@@ -92,6 +95,9 @@ def get_sub_map(args: utils.Args, x, y, city_name, vectors=[], polyline_spans=[]
             return np.sqrt((point_a[0] - point_b[0]) ** 2 + (point_a[1] - point_b[1]) ** 2)
 
         def get_dis_for_points(point, polygon):
+            '''
+            计算点 point 到多边形 polygon 的最短距离
+            '''
             dis = np.min(np.square(polygon[:, 0] - point[0]) + np.square(polygon[:, 1] - point[1]))
             return np.sqrt(dis)
 
@@ -104,11 +110,14 @@ def get_sub_map(args: utils.Args, x, y, city_name, vectors=[], polyline_spans=[]
             return False
 
         def get_hash(point):
+            '''
+                计算点 point 的 hash 值
+            '''
             return round((point[0] + 500) * 100) * 1000000 + round((point[1] + 500) * 100)
 
         lane_idx_2_polygon_idx = {}
         for polygon_idx, lane_idx in enumerate(lane_ids):
-            lane_idx_2_polygon_idx[lane_idx] = polygon_idx
+            lane_idx_2_polygon_idx[lane_idx] = polygon_idx #建立从车道 ID 到多边形索引的对应关系
 
         # There is a lane scoring module (see Section 3.2) in the paper in order to reduce the number of goal candidates.
         # In this implementation, we use goal scoring instead of lane scoring, because we observed that it performs slightly better than lane scoring.
@@ -125,18 +134,18 @@ def get_sub_map(args: utils.Args, x, y, city_name, vectors=[], polyline_spans=[]
                     hash = get_hash(point)
                     if hash not in visit:
                         visit[hash] = True
-                        points.append(point)
+                        points.append(point)# 这一步的目的是去重，确保目标点没有重复
 
                 # Subdivide lanes to get more fine-grained 2D goals.
                 if 'subdivide' in args.other_params:
-                    subdivide_points = get_subdivide_points(polygon)
+                    subdivide_points = get_subdivide_points(polygon)# 为车道生成更精细的目标点，使预测更加精确
                     points.extend(subdivide_points)
                     subdivide_points = get_subdivide_points(polygon, include_self=True)
 
             mapping['goals_2D'] = np.array(points)
 
         for index_polygon, polygon in enumerate(polygons):
-            assert_(2 <= len(polygon) <= 10, info=len(polygon))
+            assert_(2 <= len(polygon) <= 10, info=len(polygon))# 保证车道线的点数在 2 到 10 之间
             # assert len(polygon) % 2 == 1
 
             # if args.visualize:
@@ -154,19 +163,20 @@ def get_sub_map(args: utils.Args, x, y, city_name, vectors=[], polyline_spans=[]
             for i, point in enumerate(polygon):
                 if i > 0:
                     vector = [0] * args.hidden_size
-                    vector[-1 - VECTOR_PRE_X], vector[-1 - VECTOR_PRE_Y] = point_pre[0], point_pre[1]
-                    vector[-1 - VECTOR_X], vector[-1 - VECTOR_Y] = point[0], point[1]
-                    vector[-5] = 1
-                    vector[-6] = i
+                    vector[-1 - VECTOR_PRE_X], vector[-1 - VECTOR_PRE_Y] = point_pre[0], point_pre[1] # 上一个点的坐标
+                    vector[-1 - VECTOR_X], vector[-1 - VECTOR_Y] = point[0], point[1]# 当前点的坐标
+                    vector[-5] = 1 # 一个标志位，用于指示这个向量的有效性
+                    vector[-6] = i # 当前点的索引
 
-                    vector[-7] = len(polyline_spans)
+                    vector[-7] = len(polyline_spans) # 记录当前多边形的索引
 
                     if 'semantic_lane' in args.other_params:
-                        vector[-8] = 1 if lane_segment.has_traffic_control else -1
-                        vector[-9] = 1 if lane_segment.turn_direction == 'RIGHT' else \
-                            -1 if lane_segment.turn_direction == 'LEFT' else 0
-                        vector[-10] = 1 if lane_segment.is_intersection else -1
-                    point_pre_pre = (2 * point_pre[0] - point[0], 2 * point_pre[1] - point[1])
+                        vector[-8] = 1 if lane_segment.has_traffic_control else -1 # 是否有交通控制
+                        # 右转为 1，左转为 -1，直行or未知为 0
+                        vector[-9] = 1 if lane_segment.turn_direction == 'RIGHT' else  \
+                            -1 if lane_segment.turn_direction == 'LEFT' else 0 
+                        vector[-10] = 1 if lane_segment.is_intersection else -1# 是否是交叉口
+                    point_pre_pre = (2 * point_pre[0] - point[0], 2 * point_pre[1] - point[1]) # 上一个点的上一个点
                     if i >= 2:
                         point_pre_pre = polygon[i - 2]
                     vector[-17] = point_pre_pre[0]
@@ -177,7 +187,7 @@ def get_sub_map(args: utils.Args, x, y, city_name, vectors=[], polyline_spans=[]
 
             end = len(vectors)
             if start < end:
-                polyline_spans.append([start, end])
+                polyline_spans.append([start, end])# 记录每个多边形的起始和结束索引
 
     return (vectors, polyline_spans)
 
@@ -188,27 +198,27 @@ def preprocess_map(map_dict):
     """
 
     for city_name in map_dict:
-        ways = map_dict[city_name]['way']
-        nodes = map_dict[city_name]['node']
+        ways = map_dict[city_name]['way']# 道路
+        nodes = map_dict[city_name]['node']# 节点
         polylines = []
         polylines_dict = {}
         for way in ways:
             polyline = []
-            points = way['nd']
-            points = [nodes[int(point['@ref'])] for point in points]
+            points = way['nd']# 节点
+            points = [nodes[int(point['@ref'])] for point in points]# 获取节点的坐标
             point_pre = None
             for i, point in enumerate(points):
                 if i > 0:
-                    vector = [float(point_pre['@x']), float(point_pre['@y']), float(point['@x']), float(point['@y'])]
+                    vector = [float(point_pre['@x']), float(point_pre['@y']), float(point['@x']), float(point['@y'])]# 两个点的坐标
                     polyline.append(vector)
                 point_pre = point
 
-            if len(polyline) > 0:
-                index_x = round_value(float(point_pre['@x']))
-                index_y = round_value(float(point_pre['@y']))
+            if len(polyline) > 0:# 保证道路的点数大于 0
+                index_x = round_value(float(point_pre['@x']))# 最后一个点的 x 坐标
+                index_y = round_value(float(point_pre['@y']))# 最后一个点的 y 坐标
                 if index_x not in polylines_dict:
-                    polylines_dict[index_x] = []
-                polylines_dict[index_x].append(polyline)
+                    polylines_dict[index_x] = []# 以 x 坐标为索引，记录多边形
+                polylines_dict[index_x].append(polyline)# 记录多边形
                 polylines.append(polyline)
 
         map_dict[city_name]['polylines'] = polylines
@@ -218,6 +228,7 @@ def preprocess_map(map_dict):
 def preprocess(args, id2info, mapping):
     """
     This function calculates matrix based on information from get_instance.
+    这个函数根据 get_instance 函数的信息计算矩阵。
     """
     polyline_spans = []
     keys = list(id2info.keys())
@@ -233,7 +244,7 @@ def preprocess(args, id2info, mapping):
     for id in keys:
         polyline = {}
 
-        info = id2info[id]
+        info = id2info[id]# 获取 id 对应的信息
         start = len(vectors)
         if args.no_agents:
             if id != 'AV' and id != 'AGENT':
@@ -241,9 +252,9 @@ def preprocess(args, id2info, mapping):
 
         agent = []
         for i, line in enumerate(info):
-            if larger(line[TIMESTAMP], two_seconds):
+            if larger(line[TIMESTAMP], two_seconds):# 如果时间戳大于两秒，则跳出循环
                 break
-            agent.append((line[X], line[Y]))
+            agent.append((line[X], line[Y]))# 记录 agent 的坐标
 
         if args.visualize:
             traj = np.zeros([args.hidden_size])
@@ -263,6 +274,9 @@ def preprocess(args, id2info, mapping):
             x, y = line[X], line[Y]
             if i > 0:
                 # print(x-line_pre[X], y-line_pre[Y])
+                '''
+                    polyline_spans 是一个用于记录多段折线或多边形边界信息的列表，它存储的是每段折线在 vectors 列表中的起止索引
+                '''
                 vector = [line_pre[X], line_pre[Y], x, y, line[TIMESTAMP], line[OBJECT_TYPE] == 'AV',
                           line[OBJECT_TYPE] == 'AGENT', line[OBJECT_TYPE] == 'OTHERS', len(polyline_spans), i]
                 vectors.append(get_pad_vector(vector))

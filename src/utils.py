@@ -792,6 +792,7 @@ def turn_traj(traj: np.ndarray, object_type='AGENT'):
         if i > 0:
             vector = [point_pre[0], point_pre[1], x, y, i * 0.1, object_type == 'AV',
                       object_type == 'AGENT', object_type == 'OTHERS', 0, i]
+            # get_pad_vector确保所有向量的长度统一
             vectors.append(get_pad_vector(vector))
         point_pre = point
     return vectors
@@ -817,6 +818,9 @@ def de_merge_tensors(tensor: Tensor, lengths):
 
 
 def gather_tensors(tensor: torch.Tensor, indices: List[list]):
+    '''
+        这个函数的作用是是从给定的张量 tensor 中，依据提供的 indices 索引列表，提取相应的值，并对输出进行填充以保证每个样本的数据一致性
+    '''
     lengths = [len(each) for each in indices]
     assert tensor.shape[0] == len(indices)
     for each in indices:
@@ -831,6 +835,9 @@ def gather_tensors(tensor: torch.Tensor, indices: List[list]):
 
 
 def get_closest_polygon(pred: np.ndarray, new_polygons) -> np.ndarray:
+    '''
+        用于根据给定的预测轨迹和一组多边形，找出距离该预测轨迹最近的一个多边形，并返回该多边形
+    '''
     dis = np.inf
     closest_polygon = None
 
@@ -860,14 +867,14 @@ DYNAMIC_NMS_LIST = [3.2, 3.8, 4.8, 5.4, 6.0] + [6.6, 7.2, 7.8, 8.4, 0.0] + \
 
 
 def select_goals_by_NMS(mapping: Dict, goals_2D: np.ndarray, scores: np.ndarray, threshold, speed, gt_goal=None, mode_num=6):
-    argsort = np.argsort(-scores)
+    argsort = np.argsort(-scores)# 对目标的评分（scores）进行降序排序
     goals_2D = goals_2D[argsort]
     scores = scores[argsort]
 
     add_eval_param(f'DY_NMS={threshold}')
 
-    speed_scale_factor = utils_cython.speed_scale_factor(speed)
-    threshold = threshold * speed_scale_factor
+    speed_scale_factor = utils_cython.speed_scale_factor(speed)# 通过 speed 计算一个速度比例因子，用于动态调整目标选择的阈值
+    threshold = threshold * speed_scale_factor# 更新目标选择的阈值，结合了速度信息
 
     pred_goals = []
     pred_probs = []
